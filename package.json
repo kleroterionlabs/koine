@@ -42,6 +42,7 @@
     "@octokit/graphql": "^8.1.0",
     "@octokit/auth-app": "^7.1.0",
     "@octokit/plugin-throttling": "^9.3.0",
+    "p-limit": "^6.1.0",
     "p-retry": "^6.2.0",
     "pino": "^9.4.0"
   },

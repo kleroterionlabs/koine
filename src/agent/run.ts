@@ -3,6 +3,7 @@
 // run whose outcome is already known. A failure BEFORE any result is real and reported as such.
 import { type Options, query } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "pino";
+import { CostMeter, type ModelTotals, type ModelUsage } from "../observability/cost.js";
 
 export type StopReason = "success" | "error_max_turns" | "error_max_budget_usd" | "error_during_execution";
 
@@ -12,7 +13,8 @@ export interface RunOutcome {
   sessionId: string;
   numTurns: number;
   costUsd: number;
-  modelUsage: Record<string, unknown>;
+  /** Per-model token + cost totals aggregated across the run's result messages. */
+  modelUsage: Record<string, ModelTotals>;
   errors: string[];
 }
 
@@ -32,11 +34,10 @@ function stopReasonOf(subtype: string): StopReason {
 /** Drive one query() to completion, returning a normalized outcome. Never throws on transport noise. */
 export async function runQuery(prompt: string, options: Options, hooks: RunHooks): Promise<RunOutcome> {
   const { log } = hooks;
+  const meter = new CostMeter();
   let stopReason: StopReason = "error_during_execution";
   let numTurns = 0;
-  let costUsd = 0;
   let sessionId = "";
-  let modelUsage: Record<string, unknown> = {};
   const errors: string[] = [];
   let gotResult = false;
 
@@ -50,11 +51,10 @@ export async function runQuery(prompt: string, options: Options, hooks: RunHooks
       if (msg.type === "result") {
         stopReason = stopReasonOf(msg.subtype);
         numTurns = msg.num_turns;
-        costUsd = msg.total_cost_usd;
-        modelUsage = (msg.modelUsage ?? {}) as Record<string, unknown>;
+        meter.record(msg.total_cost_usd, (msg.modelUsage ?? {}) as Record<string, ModelUsage>);
         if (msg.subtype !== "success") errors.push(...(msg.errors ?? []));
         gotResult = true;
-        log.info({ stopReason, costUsd, numTurns }, "agent run finished");
+        log.info({ stopReason, costUsd: msg.total_cost_usd, numTurns }, "agent run finished");
       }
     }
   } catch (err) {
@@ -68,5 +68,13 @@ export async function runQuery(prompt: string, options: Options, hooks: RunHooks
     }
   }
 
-  return { ok: stopReason === "success", stopReason, sessionId, numTurns, costUsd, modelUsage, errors };
+  return {
+    ok: stopReason === "success",
+    stopReason,
+    sessionId,
+    numTurns,
+    costUsd: meter.totalUsd,
+    modelUsage: meter.byModel(),
+    errors,
+  };
 }

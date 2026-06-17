@@ -1,42 +1,39 @@
-// src/github/client.ts — THE only path to the GitHub API. All backoff/retry + auth live here so both
-// tools share one hardened transport. Reads are concurrency-friendly; writes serialize via p-retry.
+// src/github/client.ts — THE only path to the GitHub API. All backoff/concurrency/budget live here so
+// both tools share one hardened transport: per-op concurrency caps, retry with rate-limit-aware waits,
+// and GraphQL point-budget tracking piggybacked on read queries.
 import { graphql as octokitGraphql } from "@octokit/graphql";
 import { throttling } from "@octokit/plugin-throttling";
 import { Octokit } from "@octokit/rest";
+import pLimit, { type LimitFunction } from "p-limit";
 import pRetry, { AbortError } from "p-retry";
 import type { Logger } from "pino";
 import { type AuthConfig, mintToken } from "./auth.js";
 
 const ThrottledOctokit = Octokit.plugin(throttling);
+
 type OpKind = "read" | "write";
+
+export interface BudgetSnapshot {
+  limit: number;
+  remaining: number;
+  resetAt: number;
+}
 
 export interface GitHubClient {
   rest: Octokit;
-  /** Run a REST call through the retry/backoff gate. */
+  /** Run a REST call through the concurrency+retry gate. */
   withRest<T>(op: OpKind, fn: (o: Octokit) => Promise<T>): Promise<T>;
-  /** Run a GraphQL document through the gate. */
+  /** Run a GraphQL document through the gate; piggybacks rateLimit{} budget tracking on reads. */
   graphql<T = unknown>(op: OpKind, query: string, vars?: Record<string, unknown>): Promise<T>;
+  budget(): { rest: BudgetSnapshot; graphql: BudgetSnapshot };
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const jitter = (ms: number): number => ms * (0.5 + Math.random());
-
-function classifyWait(err: unknown, attempt: number): number {
-  const e = err as { status?: number; response?: { status?: number; headers?: Record<string, string> } };
-  const status = e.status ?? e.response?.status;
-  const headers = e.response?.headers ?? {};
-  if (status === 403 || status === 429) {
-    const ra = Number(headers["retry-after"]);
-    if (Number.isFinite(ra)) return ra * 1000;
-    const reset = Number(headers["x-ratelimit-reset"]);
-    if (Number.isFinite(reset)) return Math.max(0, reset * 1000 - Date.now());
-    return Math.max(60_000, jitter(2 ** attempt * 1000));
-  }
-  if (status && status >= 500) return jitter(2 ** attempt * 500);
-  throw new AbortError(err as Error); // 4xx (non-rate) ⇒ don't retry
-}
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export interface ClientOptions {
+  readConcurrency?: number;
+  writeConcurrency?: number;
   maxRetries?: number;
 }
 
@@ -62,27 +59,68 @@ export async function createGitHubClient(
   const gql = octokitGraphql.defaults({
     headers: {
       authorization: `token ${token}`,
+      // Opt into issue-types + sub-issues GraphQL fields (harmless once GA; required while in preview).
       "GraphQL-Features": "issue_types,sub_issues",
     },
   });
 
-  const run = <T>(_op: OpKind, task: () => Promise<T>): Promise<T> =>
-    pRetry(
-      async (attempt) => {
-        try {
-          return await task();
-        } catch (err) {
-          await sleep(classifyWait(err, attempt));
-          throw err;
-        }
-      },
-      { retries: opts.maxRetries ?? 6, minTimeout: 1000, factor: 2 },
+  const limits: Record<OpKind, LimitFunction> = {
+    read: pLimit(opts.readConcurrency ?? 8),
+    write: pLimit(opts.writeConcurrency ?? 1), // serialize writes ⇒ stay under the ~80/min cap
+  };
+  const budget = {
+    rest: { limit: 5000, remaining: 5000, resetAt: 0 } as BudgetSnapshot,
+    graphql: { limit: 5000, remaining: 5000, resetAt: 0 } as BudgetSnapshot,
+  };
+
+  function classifyWait(err: unknown, attempt: number): number {
+    const e = err as { status?: number; response?: { status?: number; headers?: Record<string, string> } };
+    const status = e.status ?? e.response?.status;
+    const headers = e.response?.headers ?? {};
+    if (status === 403 || status === 429) {
+      const ra = Number(headers["retry-after"]);
+      if (Number.isFinite(ra)) return ra * 1000;
+      const reset = Number(headers["x-ratelimit-reset"]);
+      if (Number.isFinite(reset)) return Math.max(0, reset * 1000 - Date.now());
+      return Math.max(60_000, jitter(2 ** attempt * 1000));
+    }
+    if (status && status >= 500) return jitter(2 ** attempt * 500);
+    throw new AbortError(err as Error); // 4xx (non-rate) ⇒ don't retry
+  }
+
+  const run = <T>(op: OpKind, task: () => Promise<T>): Promise<T> =>
+    limits[op](() =>
+      pRetry(
+        async (attempt) => {
+          try {
+            return await task();
+          } catch (err) {
+            await sleep(classifyWait(err, attempt));
+            throw err;
+          }
+        },
+        { retries: opts.maxRetries ?? 6, minTimeout: 1000, factor: 2 },
+      ),
     );
 
   return {
     rest,
     withRest: (op, fn) => run(op, () => fn(rest)),
     graphql: <T>(op: OpKind, query: string, vars?: Record<string, unknown>) =>
-      run<T>(op, () => gql(query, vars) as Promise<T>),
+      run<T>(op, async () => {
+        // `rateLimit` exists only on Query — NEVER inject it into mutations (op "write").
+        const track = op === "read" && !query.includes("rateLimit {");
+        const doc = track ? query.replace(/}\s*$/, "  rateLimit { limit remaining resetAt }\n}") : query;
+        const data = (await gql(doc, vars)) as T & {
+          rateLimit?: { limit: number; remaining: number; resetAt: string };
+        };
+        if (track && data?.rateLimit) {
+          budget.graphql.remaining = data.rateLimit.remaining;
+          budget.graphql.limit = data.rateLimit.limit;
+          budget.graphql.resetAt = Math.floor(new Date(data.rateLimit.resetAt).getTime() / 1000);
+        }
+        return data;
+      }),
+    budget: () => ({ rest: { ...budget.rest }, graphql: { ...budget.graphql } }),
   };
 }

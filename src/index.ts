@@ -20,6 +20,7 @@ export {
 export {
   type GitHubClient,
   type ClientOptions,
+  type BudgetSnapshot,
   createGitHubClient,
 } from "./github/client.js";
 
@@ -33,3 +34,4 @@ export {
 
 // Observability
 export { type Logger, type LoggerOptions, createLogger } from "./observability/logger.js";
+export { CostMeter, type ModelUsage, type ModelTotals } from "./observability/cost.js";
