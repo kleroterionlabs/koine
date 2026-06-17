@@ -20,10 +20,15 @@ describe("scrubSecrets", () => {
 });
 
 describe("sanitizeMentions", () => {
-  it("backtick-wraps @-handles so they don't notify, and reports them", () => {
-    const r = sanitizeMentions("cc @octocat please");
-    expect(r.clean).toBe("cc `@octocat` please");
-    expect(r.stripped).toEqual(["octocat"]);
+  it("neutralizes user and team mentions by dropping the @, reporting the handles", () => {
+    const r = sanitizeMentions("owner: @platform-lead and @kleroterionlabs/maintainers review this");
+    expect(r.clean).toBe("owner: platform-lead and kleroterionlabs/maintainers review this");
+    expect(r.clean).not.toContain("@");
+    expect(r.stripped.sort()).toEqual(["kleroterionlabs/maintainers", "platform-lead"]);
+  });
+
+  it("neutralizes a mention at the very start of the text", () => {
+    expect(sanitizeMentions("@octocat please look").clean).toBe("octocat please look");
   });
 
   it("leaves emails alone", () => {
@@ -36,7 +41,8 @@ describe("sanitizeMentions", () => {
 describe("cleanOutbound", () => {
   it("scrubs secrets AND mentions in one pass", () => {
     const r = cleanOutbound("ping @octocat with ghp_0123456789abcdefghij0123456789abcd");
-    expect(r.clean).toContain("`@octocat`");
+    expect(r.clean).toContain("octocat");
+    expect(r.clean).not.toContain("@octocat");
     expect(r.clean).toContain("[REDACTED:github-token]");
     expect(r.mentions).toEqual(["octocat"]);
     expect(r.secrets).toEqual(["github-token"]);
