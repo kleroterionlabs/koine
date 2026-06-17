@@ -1,20 +1,32 @@
 {
   "name": "@kleroterion/koine",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "The common tongue of the Kleroterion tools — shared building blocks for Boule and Praktor: GitHub-artifact taxonomy, the boule:v1 identity block, a gated GitHub client (App/PAT), the resilient Claude Agent SDK run-loop, structured logging, and outbound secret/mention scrubbing.",
   "keywords": ["kleroterion", "boule", "praktor", "github", "claude", "agent-sdk", "shared", "library"],
   "homepage": "https://github.com/kleroterionlabs/koine#readme",
-  "bugs": { "url": "https://github.com/kleroterionlabs/koine/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/kleroterionlabs/koine.git" },
+  "bugs": {
+    "url": "https://github.com/kleroterionlabs/koine/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kleroterionlabs/koine.git"
+  },
   "license": "MIT",
   "author": "Bill Schumacher <34168009+BillSchumacher@users.noreply.github.com>",
   "type": "module",
-  "engines": { "node": ">=20.11" },
+  "engines": {
+    "node": ">=20.11"
+  },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "files": ["dist"],
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
