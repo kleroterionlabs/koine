@@ -1,0 +1,45 @@
+{
+  "name": "@kleroterion/koine",
+  "version": "0.0.0",
+  "description": "The common tongue of the Kleroterion tools — shared building blocks for Boule and Praktor: GitHub-artifact taxonomy, the boule:v1 identity block, a gated GitHub client (App/PAT), the resilient Claude Agent SDK run-loop, structured logging, and outbound secret/mention scrubbing.",
+  "keywords": ["kleroterion", "boule", "praktor", "github", "claude", "agent-sdk", "shared", "library"],
+  "homepage": "https://github.com/kleroterionlabs/koine#readme",
+  "bugs": { "url": "https://github.com/kleroterionlabs/koine/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/kleroterionlabs/koine.git" },
+  "license": "MIT",
+  "author": "Bill Schumacher <34168009+BillSchumacher@users.noreply.github.com>",
+  "type": "module",
+  "engines": { "node": ">=20.11" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "biome ci .",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.0",
+    "@octokit/graphql": "^8.1.0",
+    "@octokit/auth-app": "^7.1.0",
+    "@octokit/plugin-throttling": "^9.3.0",
+    "p-retry": "^6.2.0",
+    "pino": "^9.4.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "typescript": "^5.6.0",
+    "tsup": "^8.3.0",
+    "vitest": "^2.1.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^22.5.0"
+  }
+}
